@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+tools/screentime.json
+.DS_Store
+Thumbs.db
