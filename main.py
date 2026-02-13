@@ -5,18 +5,17 @@ import actions
 import json
 import time
 import threading
-import pygetwindow as gw
 from datetime import datetime
 import sys
+import ctypes
+from ctypes import wintypes
 
 # ================= 數據配置區 =================
 SAVE_PATH = "tools/screentime.json"
 LOCK_FILE = "tools/pet.lock"
 
-# 關鍵字判定：包含這些內容的通通歸類為 "VS Code"
-# 修正：新增 "vscode" (無空格) 確保不會漏抓
-VSCODE_KEYWORDS = ["visual studio code", "actions.py - deskpet", "vs code", "vscode"]
-IGNORE_NAMES = ["tk", "python", "task host window", "py.exe", "program manager"]
+# 排除不需要紀錄的系統進程
+IGNORE_PROCS = ["idle", "explorer", "taskhostw", "python", "tk", "shellexperiencehost"]
 # =============================================
 
 class DesktopPet:
@@ -43,7 +42,7 @@ class DesktopPet:
         self.img_right = ImageTk.PhotoImage(resized_right)
         self.img_left = ImageTk.PhotoImage(resized_left)
 
-        # 3. 介面與位置 (座標倍數鎖定為 2.5)
+        # 3. 介面與位置 (座標倍數絕對是 2.5)
         self.label = tk.Label(self.window, image=self.img_right, bg=trans_color, bd=0)
         self.label.pack()
         self.screen_width = self.window.winfo_screenwidth()
@@ -59,7 +58,7 @@ class DesktopPet:
         # 4. 螢幕紀錄
         self.screen_data = self.load_data()
         self.running = True
-        self.temp_seconds_map = {} 
+        self.temp_seconds_map = {} # 暫存秒數
         
         self.tracker_thread = threading.Thread(target=self.track_screen_time, daemon=True)
         self.tracker_thread.start()
@@ -80,32 +79,39 @@ class DesktopPet:
             os.remove(LOCK_FILE)
         self.window.destroy()
 
-    def get_app_name(self, raw_title):
-        if not raw_title or not raw_title.strip():
-            return "待機/桌面"
-        
-        t_low = raw_title.lower()
+    def get_app_name(self):
+        """ 
+        使用 Windows 原生 API 獲取進程名稱 (不需要 psutil)
+        """
+        try:
+            # 獲取目前活躍視窗控制碼
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            if not hwnd: return "待機/桌面"
 
-        # A. 優先排除雜訊
-        if any(ignore in t_low for ignore in IGNORE_NAMES):
-            return "待機/桌面"
-
-        # B. 【重要修正】優先判定 VS Code，避免被後面的 split 邏輯截斷
-        if any(kw in t_low for kw in VSCODE_KEYWORDS):
-            return "VS Code"
-
-        # C. Brave 容器偵測
-        if "brave" in t_low:
-            return "brave"
-
-        # D. 遊戲判斷
-        if "crosvm" in t_low:
-            return "薑餅人王國"
-        
-        # E. 其他通用：抓標題最後一部分
-        if " - " in raw_title:
-            return raw_title.split(" - ")[-1].strip().lower()
-
+            # 獲取進程 ID (PID)
+            pid = wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            
+            # 打開進程讀取路徑 (PROCESS_QUERY_LIMITED_INFORMATION = 0x1000)
+            h_process = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+            if h_process:
+                buf = ctypes.create_unicode_buffer(260)
+                size = wintypes.DWORD(260)
+                # 獲取可執行檔的完整路徑
+                if ctypes.windll.kernel32.QueryFullProcessImageNameW(h_process, 0, buf, ctypes.byref(size)):
+                    full_path = buf.value
+                    proc_name = os.path.basename(full_path).replace(".exe", "").lower()
+                    ctypes.windll.kernel32.CloseHandle(h_process)
+                    
+                    # --- 紀錄轉化邏輯 ---
+                    if proc_name in IGNORE_PROCS: return "待機/桌面"
+                    if proc_name == "code": return "VS Code"
+                    if "brave" in proc_name: return "brave"
+                    if "crosvm" in proc_name: return "薑餅人王國"
+                    return proc_name
+                ctypes.windll.kernel32.CloseHandle(h_process)
+        except:
+            pass
         return "待機/桌面"
 
     def load_data(self):
@@ -124,16 +130,16 @@ class DesktopPet:
     def track_screen_time(self):
         while self.running:
             try:
-                active_window = gw.getActiveWindow()
-                title = active_window.title if active_window and active_window.title else ""
-                current_app = self.get_app_name(title)
+                current_app = self.get_app_name()
                 
                 today = datetime.now().strftime("%Y-%m-%d")
                 if today not in self.screen_data:
                     self.screen_data[today] = {}
 
+                # 累積秒數
                 self.temp_seconds_map[current_app] = self.temp_seconds_map.get(current_app, 0) + 1
                 
+                # 滿 60 秒後，JSON 數值整數 +1
                 if self.temp_seconds_map[current_app] >= 60:
                     self.screen_data[today][current_app] = int(self.screen_data[today].get(current_app, 0)) + 1
                     self.temp_seconds_map[current_app] = 0
