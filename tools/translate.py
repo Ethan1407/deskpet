@@ -34,6 +34,22 @@ def translate_text(input_box, output_box, event=None):
     # 關鍵：回傳 "break" 可以攔截 Enter 鍵原本的換行功能，讓輸入框保持乾淨
     return "break"
 
+def clear_input(input_box):
+    """清除輸入框"""
+    input_box.delete("1.0", tk.END)
+    input_box.focus_set()
+
+def copy_to_clipboard(output_box, parent, status_label):
+    """複製翻譯結果到剪貼板"""
+    text = output_box.get("1.0", tk.END).strip()
+    if text and not text.startswith("翻譯失敗"):
+        parent.clipboard_clear()
+        parent.clipboard_append(text)
+        parent.update()
+        # 顯示複製成功提示
+        status_label.config(text="✓ 複製成功", fg="#27ae60", font=("Microsoft JhengHei", 10, "bold"))
+        parent.after(1000, lambda: status_label.config(text="翻譯結果 (左鍵點擊自動複製)", fg="black", font=("Microsoft JhengHei", 10, "bold")))
+
 def show_translate_window(parent):
     top = tk.Toplevel(parent)
     top.title("中英互譯工具")
@@ -54,16 +70,30 @@ def show_translate_window(parent):
     # 綁定 Enter 鍵觸發翻譯
     input_box.bind("<Return>", lambda e: translate_text(input_box, output_box))
 
-    # 3. 翻譯按鈕 (保留原本功能)
-    btn_trans = tk.Button(top, text="🔍 點我翻譯", font=("Microsoft JhengHei", 10),
+    # 3. 按鈕框架
+    btn_frame = tk.Frame(top)
+    btn_frame.pack(pady=10)
+    
+    # 翻譯按鈕
+    btn_trans = tk.Button(btn_frame, text="🔍 點我翻譯", font=("Microsoft JhengHei", 10),
                           command=lambda: translate_text(input_box, output_box),
-                          bg="#3498db", fg="white", width=20)
-    btn_trans.pack(pady=10)
+                          bg="#3498db", fg="white", width=15)
+    btn_trans.pack(side=tk.LEFT, padx=5)
+    
+    # 清除按鈕
+    btn_clear = tk.Button(btn_frame, text="🗑️ 清除", font=("Microsoft JhengHei", 10),
+                          command=lambda: clear_input(input_box),
+                          bg="#e74c3c", fg="white", width=8)
+    btn_clear.pack(side=tk.LEFT, padx=5)
 
-    tk.Label(top, text="翻譯結果", font=("Microsoft JhengHei", 10, "bold")).pack(pady=5)
+    status_label = tk.Label(top, text="翻譯結果 (左鍵點擊自動複製)", font=("Microsoft JhengHei", 10, "bold"))
+    status_label.pack(pady=5)
 
     # 顯示輸出區
     output_box.pack(padx=15, pady=5)
+    
+    # --- 左鍵點擊複製功能 ---
+    output_box.bind("<Button-1>", lambda e: copy_to_clipboard(output_box, top, status_label))
 
     # --- ✨ 自動聚焦 ---
     # 視窗開啟後游標自動跳到輸入框，直接打字不用點滑鼠

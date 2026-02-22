@@ -5,8 +5,11 @@ from tkinter import ttk
 from datetime import date, timedelta
 import ctypes
 from ctypes import wintypes
+import time
 DATA_FILE = os.path.join(os.path.dirname(__file__), "screentime.json")
 IGNORE_PROCS = ["python", "pythonw", "tk", "explorer", "taskhostw", "py", "pyw", "shellexperiencehost"]
+last_recorded_app = None
+last_recorded_time = None
 def get_active_window_name():
     """使用原生 Windows API 抓取進程名稱，全部回傳小寫英文執行檔名"""
     try:
@@ -31,8 +34,19 @@ def get_active_window_name():
         pass
     return "idle"
 def update_time():
+    global last_recorded_app, last_recorded_time
     today = str(date.today())
     app_name = get_active_window_name()
+    
+    # 防止重複偵測：同一個應用在短時間內不重複計數
+    current_time = time.time()
+    if last_recorded_app == app_name and last_recorded_time is not None:
+        if current_time - last_recorded_time < 55:  # 55秒內不重複計數
+            return
+    
+    last_recorded_app = app_name
+    last_recorded_time = current_time
+    
     data = {}
     if os.path.exists(DATA_FILE):
         try:
@@ -40,9 +54,14 @@ def update_time():
                 data = json.load(f)
         except:
             data = {}
+    
     if today not in data:
         data[today] = {}
+    
+    # 確保應用名稱統一為小寫
+    app_name = app_name.lower()
     data[today][app_name] = data[today].get(app_name, 0) + 1
+    
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 def show_stats_window(parent):
@@ -56,7 +75,15 @@ def show_stats_window(parent):
         if os.path.exists(DATA_FILE):
             try:
                 with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    # 標準化所有應用名稱為小寫，合併重複項
+                    for date_key in data:
+                        normalized_apps = {}
+                        for app_name, minutes in data[date_key].items():
+                            app_lower = app_name.lower()
+                            normalized_apps[app_lower] = normalized_apps.get(app_lower, 0) + minutes
+                        data[date_key] = normalized_apps
+                    return data
             except:
                 return {}
         return {}
